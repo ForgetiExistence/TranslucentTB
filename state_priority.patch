@@ -416,3 +416,68 @@ index 5c5c4c6..786c1f5 100644
      }
    },
    "type": "object"
+diff --git a/.github/workflows/build.yml b/.github/workflows/build.yml
+new file mode 100644
+index 0000000..6e8133b
+--- /dev/null
++++ b/.github/workflows/build.yml
+@@ -0,0 +1,58 @@
++name: Build TranslucentTB
++
++on:
++  push:
++    branches: [ main, develop ]
++  workflow_dispatch:
++
++jobs:
++  build:
++    runs-on: windows-latest
++    
++    strategy:
++      matrix:
++        platform: [x64]
++        configuration: [Release]
++    
++    steps:
++    - name: Checkout code
++      uses: actions/checkout@v4
++      with:
++        fetch-depth: 0
++
++    - name: Setup MSBuild
++      uses: microsoft/setup-msbuild@v2
++
++    - name: Setup NuGet
++      uses: NuGet/setup-nuget@v2
++
++    - name: Integrate vcpkg
++      run: vcpkg integrate install
++
++    - name: Restore NuGet packages
++      run: nuget restore TranslucentTB.slnx
++
++    - name: Build solution
++      run: msbuild TranslucentTB.slnx /p:Configuration=${{ matrix.configuration }} /p:Platform=${{ matrix.platform }} /m
++
++    - name: Create portable package
++      shell: pwsh
++      run: |
++        $platform = "${{ matrix.platform }}"
++        $configuration = "${{ matrix.configuration }}"
++        
++        # Create output directory
++        New-Item -Path "portable" -ItemType Directory -Force
++        
++        # Copy build artifacts
++        Copy-Item -Path "AppPackage\bin\$platform\$configuration\*" -Destination "portable" -Recurse -Include @("*.exe", "*.dll", "resources.pri", "Assets")
++        
++        # Create zip
++        Compress-Archive -Path "portable\*" -DestinationPath "TranslucentTB-portable-$($platform.ToLower()).zip"
++
++    - name: Upload artifact
++      uses: actions/upload-artifact@v4
++      with:
++        name: TranslucentTB-portable-${{ matrix.platform }}
++        path: TranslucentTB-portable-${{ matrix.platform }}.zip
++        retention-days: 90
+\ No newline at end of file
