@@ -107,7 +107,7 @@ public:
 		writer.StartArray();
 		for (const auto &state : StatePriority)
 		{
-			writer.String(TaskbarStateTypeToString(state));
+			rjh::WriteString(writer, TaskbarStateTypeToString(state));
 		}
 		writer.EndArray();
 	}
