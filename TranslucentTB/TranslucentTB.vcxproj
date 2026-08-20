@@ -13,6 +13,7 @@
   <PropertyGroup Label="Globals">
     <ProjectGuid>{59F844AA-8D3C-431C-B8CC-57682915F551}</ProjectGuid>
     <ConfigurationType>Application</ConfigurationType>
+    <CppWinRTGenerateWindowsMetadata>true</CppWinRTGenerateWindowsMetadata>
     <GenerateManifest>true</GenerateManifest>
     <RootNamespace>TranslucentTB</RootNamespace>
   </PropertyGroup>
