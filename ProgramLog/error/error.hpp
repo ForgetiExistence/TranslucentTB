@@ -20,17 +20,25 @@ namespace Error {
 
 		PROGRAMLOG_API std::wstring GetLogMessage(std::wstring_view message, std::wstring_view error_message);
 
+		PROGRAMLOG_API void HandleError(std::wstring_view message, std::wstring_view error_message, std::source_location location);
+		[[noreturn]] PROGRAMLOG_API void HandleCritical(std::wstring_view message, std::wstring_view error_message, std::source_location location);
+
 		template<spdlog::level::level_enum level>
 		inline void Handle(std::wstring_view message, std::wstring_view error_message, std::source_location location)
 		{
-			Log(GetLogMessage(message, error_message), level, location);
+			if constexpr (level == spdlog::level::err)
+			{
+				HandleError(message, error_message, location);
+			}
+			else if constexpr (level == spdlog::level::critical)
+			{
+				HandleCritical(message, error_message, location);
+			}
+			else
+			{
+				Log(GetLogMessage(message, error_message), level, location);
+			}
 		}
-
-		template<>
-		PROGRAMLOG_API void Handle<spdlog::level::err>(std::wstring_view message, std::wstring_view error_message, std::source_location location);
-
-		template<>
-		[[noreturn]] PROGRAMLOG_API void Handle<spdlog::level::critical>(std::wstring_view message, std::wstring_view error_message, std::source_location location);
 
 		std::thread HandleCommon(spdlog::level::level_enum level, std::wstring_view message, std::wstring_view error_message, std::source_location location, Util::null_terminated_wstring_view title, std::wstring_view description, unsigned int type);
 		void HandleCriticalCommon(std::wstring_view message, std::wstring_view error_message, std::source_location location);
@@ -39,19 +47,14 @@ namespace Error {
 	template<spdlog::level::level_enum level>
 	inline bool ShouldLog()
 	{
-		return impl::ShouldLogInternal(level);
-	}
-
-	template<>
-	constexpr bool ShouldLog<spdlog::level::critical>()
-	{
-		return true;
-	}
-
-	template<>
-	constexpr bool ShouldLog<spdlog::level::err>()
-	{
-		return true;
+		if constexpr (level == spdlog::level::critical || level == spdlog::level::err)
+		{
+			return true;
+		}
+		else
+		{
+			return impl::ShouldLogInternal(level);
+		}
 	}
 };
 

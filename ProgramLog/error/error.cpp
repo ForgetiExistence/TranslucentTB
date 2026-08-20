@@ -49,8 +49,7 @@ std::wstring Error::impl::GetLogMessage(std::wstring_view message, std::wstring_
 	}
 }
 
-template<>
-void Error::impl::Handle<spdlog::level::err>(std::wstring_view message, std::wstring_view error_message, std::source_location location)
+void Error::impl::HandleError(std::wstring_view message, std::wstring_view error_message, std::source_location location)
 {
 	auto dialogBoxThread = HandleCommon(spdlog::level::err, message, error_message, location, UTIL_WIDEN(UTF8_ERROR_TITLE), APP_NAME L" has encountered an error.", MB_ICONWARNING);
 	if (dialogBoxThread.joinable())
@@ -63,8 +62,7 @@ void Error::impl::Handle<spdlog::level::err>(std::wstring_view message, std::wst
 	}
 }
 
-template<>
-void Error::impl::Handle<spdlog::level::critical>(std::wstring_view message, std::wstring_view error_message, std::source_location location)
+void Error::impl::HandleCritical(std::wstring_view message, std::wstring_view error_message, std::source_location location)
 {
 	HandleCriticalCommon(message, error_message, location);
 	__fastfail(FAST_FAIL_FATAL_APP_EXIT);
