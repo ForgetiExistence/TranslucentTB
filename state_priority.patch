@@ -1,0 +1,418 @@
+diff --git a/Common/config/config.hpp b/Common/config/config.hpp
+index 25b1740..bcfedc7 100644
+--- a/Common/config/config.hpp
++++ b/Common/config/config.hpp
+@@ -5,6 +5,7 @@
+ #include <spdlog/common.h>
+ #include <string_view>
+ #include <optional>
++#include <vector>
+ 
+ #include "optionaltaskbarappearance.hpp"
+ #include "rapidjsonhelper.hpp"
+@@ -13,6 +14,19 @@
+ #include "../win32.hpp"
+ #include "windowfilter.hpp"
+ 
++// Enum for taskbar states used in priority configuration
++enum class TaskbarStateType {
++	BatterySaver = 0,
++	TaskViewOpened,
++	PeekActive,
++	StartOpened,
++	SearchOpened,
++	MaximisedWindow,
++	VisibleWindow,
++	Desktop,
++	_COUNT
++};
++
+ class Config {
+ private:
+ // TODO: move to some common place? osversion helper and move some win32.hpp stuff there?
+@@ -45,6 +59,19 @@ public:
+ 	OptionalTaskbarAppearance TaskViewOpenedAppearance = { true, ACCENT_NORMAL, { 0, 0, 0, 0 }, false, true, 9.0f };
+ 	OptionalTaskbarAppearance BatterySaverAppearance = { false, ACCENT_ENABLE_GRADIENT, { 0, 0, 0, 0 }, true, false, 9.0f };
+ 
++	// Priority order for state evaluation (default order matches original hardcoded priority)
++	// States earlier in the list have higher priority
++	std::vector<TaskbarStateType> StatePriority = {
++		TaskbarStateType::BatterySaver,
++		TaskbarStateType::TaskViewOpened,
++		TaskbarStateType::PeekActive,
++		TaskbarStateType::StartOpened,
++		TaskbarStateType::SearchOpened,
++		TaskbarStateType::MaximisedWindow,
++		TaskbarStateType::VisibleWindow,
++		TaskbarStateType::Desktop
++	};
++
+ 	// Advanced
+ 	WindowFilter IgnoredWindows;
+ 	std::optional<bool> HideTray;
+@@ -74,6 +101,15 @@ public:
+ 		}
+ 		rjh::Serialize(writer, UseXamlContextMenu, USE_XAML_CONTEXT_MENU_KEY);
+ 		rjh::Serialize(writer, CopyDlls, COPY_DLLS_KEY);
++
++		// Serialize state priority
++		rjh::WriteKey(writer, STATE_PRIORITY_KEY);
++		writer.StartArray();
++		for (const auto &state : StatePriority)
++		{
++			writer.String(TaskbarStateTypeToString(state));
++		}
++		writer.EndArray();
+ 	}
+ 
+ 	inline void Deserialize(const rjh::value_t &obj, void (*unknownKeyCallback)(std::wstring_view) = nullptr)
+@@ -153,6 +189,10 @@ public:
+ 			{
+ 				rjh::Deserialize(it->value, CopyDlls, key);
+ 			}
++			else if (key == STATE_PRIORITY_KEY)
++			{
++				DeserializeStatePriority(it->value, key);
++			}
+ 			else if (unknownKeyCallback)
+ 			{
+ 				unknownKeyCallback(key);
+@@ -185,4 +225,79 @@ private:
+ 	static constexpr std::wstring_view LANGUAGE_KEY = L"language";
+ 	static constexpr std::wstring_view USE_XAML_CONTEXT_MENU_KEY = L"use_xaml_context_menu";
+ 	static constexpr std::wstring_view COPY_DLLS_KEY = L"copy_dlls";
++	static constexpr std::wstring_view STATE_PRIORITY_KEY = L"state_priority";
++
++	// Helper functions for TaskbarStateType string conversion
++	static constexpr std::wstring_view TaskbarStateTypeToString(TaskbarStateType state)
++	{
++		switch (state)
++		{
++		case TaskbarStateType::BatterySaver: return L"battery_saver";
++		case TaskbarStateType::TaskViewOpened: return L"task_view_opened";
++		case TaskbarStateType::PeekActive: return L"peek_active";
++		case TaskbarStateType::StartOpened: return L"start_opened";
++		case TaskbarStateType::SearchOpened: return L"search_opened";
++		case TaskbarStateType::MaximisedWindow: return L"maximised_window";
++		case TaskbarStateType::VisibleWindow: return L"visible_window";
++		case TaskbarStateType::Desktop: return L"desktop";
++		default: return L"unknown";
++		}
++	}
++
++	static std::optional<TaskbarStateType> StringToTaskbarStateType(std::wstring_view str)
++	{
++		if (str == L"battery_saver") return TaskbarStateType::BatterySaver;
++		if (str == L"task_view_opened") return TaskbarStateType::TaskViewOpened;
++		if (str == L"peek_active") return TaskbarStateType::PeekActive;
++		if (str == L"start_opened") return TaskbarStateType::StartOpened;
++		if (str == L"search_opened") return TaskbarStateType::SearchOpened;
++		if (str == L"maximised_window") return TaskbarStateType::MaximisedWindow;
++		if (str == L"visible_window") return TaskbarStateType::VisibleWindow;
++		if (str == L"desktop") return TaskbarStateType::Desktop;
++		return std::nullopt;
++	}
++
++	void DeserializeStatePriority(const rjh::value_t &val, std::wstring_view key)
++	{
++		rjh::EnsureType(rj::Type::kArrayType, val.GetType(), key);
++
++		std::vector<TaskbarStateType> newPriority;
++		std::vector<bool> seen(static_cast<std::size_t>(TaskbarStateType::_COUNT), false);
++
++		for (auto it = val.Begin(); it != val.End(); ++it)
++		{
++			rjh::EnsureType(rj::Type::kStringType, it->GetType(), key);
++
++			const auto stateStr = rjh::ValueToStringView(*it);
++			auto state = StringToTaskbarStateType(stateStr);
++
++			if (!state)
++			{
++				throw rjh::DeserializationError {
++					std::format(L"Found invalid state \"{}\" while deserializing {}", stateStr, key)
++				};
++			}
++
++			auto idx = static_cast<std::size_t>(*state);
++			if (seen[idx])
++			{
++				throw rjh::DeserializationError {
++					std::format(L"Duplicate state \"{}\" in {}", stateStr, key)
++				};
++			}
++
++			seen[idx] = true;
++			newPriority.push_back(*state);
++		}
++
++		// Check that all states are present
++		if (newPriority.size() != static_cast<std::size_t>(TaskbarStateType::_COUNT))
++		{
++			throw rjh::DeserializationError {
++				std::format(L"State priority must contain all {} states", static_cast<int>(TaskbarStateType::_COUNT))
++			};
++		}
++
++		StatePriority = std::move(newPriority);
++	}
+ };
+diff --git a/TranslucentTB/taskbar/taskbarattributeworker.cpp b/TranslucentTB/taskbar/taskbarattributeworker.cpp
+index 9937b9f..b66ce85 100644
+--- a/TranslucentTB/taskbar/taskbarattributeworker.cpp
++++ b/TranslucentTB/taskbar/taskbarattributeworker.cpp
+@@ -395,92 +395,160 @@ TaskbarAppearance TaskbarAttributeWorker::GetConfig(taskbar_iterator taskbar) co
+ {
+ 	const auto& config = m_ConfigManager.GetConfig();
+ 
+-	if (config.BatterySaverAppearance.Enabled && m_PowerSaver)
+-	{
+-		return WithPreview(txmp::TaskbarState::BatterySaver, config.BatterySaverAppearance);
+-	}
++	// Helper lambda to check and return appearance for a given state
++	auto checkState = [&](TaskbarStateType stateType) -> std::optional<TaskbarAppearance> {
++		switch (stateType)
++		{
++		case TaskbarStateType::BatterySaver:
++		{
++			if (config.BatterySaverAppearance.Enabled && m_PowerSaver)
++			{
++				return WithPreview(txmp::TaskbarState::BatterySaver, config.BatterySaverAppearance);
++			}
++			break;
++		}
+ 
+-	if (config.TaskViewOpenedAppearance.Enabled && m_TaskViewActive)
+-	{
+-		return WithPreview(txmp::TaskbarState::TaskViewOpened, config.TaskViewOpenedAppearance);
+-	}
++		case TaskbarStateType::TaskViewOpened:
++		{
++			if (config.TaskViewOpenedAppearance.Enabled && m_TaskViewActive)
++			{
++				return WithPreview(txmp::TaskbarState::TaskViewOpened, config.TaskViewOpenedAppearance);
++			}
++			break;
++		}
+ 
+-	// Task View is ignored by peek, so shall we
+-	if (m_PeekActive)
+-	{
+-		return WithPreview(txmp::TaskbarState::Desktop, config.DesktopAppearance);
+-	}
++		case TaskbarStateType::PeekActive:
++		{
++			// Task View is ignored by peek, so shall we
++			if (m_PeekActive)
++			{
++				return WithPreview(txmp::TaskbarState::Desktop, config.DesktopAppearance);
++			}
++			break;
++		}
+ 
+-	// on windows 11, search is considered open when start is, so we need to check for start first.
+-	bool startOpened;
+-	if (m_IsWindows11 && (m_CurrentSearchMonitor != nullptr || m_CurrentFindInStartMonitor != nullptr))
+-	{
+-		// checking the search monitor is more reliable on windows 11 (if available)
+-		// so check the start monitor to see if it's open and then use the search monitor
+-		// to check *where* it's open.
+-		startOpened = m_CurrentStartMonitor != nullptr && (m_CurrentSearchMonitor == taskbar->first || m_CurrentFindInStartMonitor == taskbar->first);
+-	}
+-	else
+-	{
+-		startOpened = m_CurrentStartMonitor == taskbar->first;
+-	}
++		case TaskbarStateType::StartOpened:
++		{
++			// on windows 11, search is considered open when start is, so we need to check for start first.
++			bool startOpened;
++			if (m_IsWindows11 && (m_CurrentSearchMonitor != nullptr || m_CurrentFindInStartMonitor != nullptr))
++			{
++				// checking the search monitor is more reliable on windows 11 (if available)
++				// so check the start monitor to see if it's open and then use the search monitor
++				// to check *where* it's open.
++				startOpened = m_CurrentStartMonitor != nullptr && (m_CurrentSearchMonitor == taskbar->first || m_CurrentFindInStartMonitor == taskbar->first);
++			}
++			else
++			{
++				startOpened = m_CurrentStartMonitor == taskbar->first;
++			}
+ 
+-	if (config.StartOpenedAppearance.Enabled && startOpened)
+-	{
+-		return WithPreview(txmp::TaskbarState::StartOpened, config.StartOpenedAppearance);
+-	}
++			if (config.StartOpenedAppearance.Enabled && startOpened)
++			{
++				return WithPreview(txmp::TaskbarState::StartOpened, config.StartOpenedAppearance);
++			}
++			break;
++		}
+ 
+-	if (config.SearchOpenedAppearance.Enabled && !startOpened && (m_CurrentSearchMonitor == taskbar->first || m_CurrentFindInStartMonitor == taskbar->first))
+-	{
+-		return WithPreview(txmp::TaskbarState::SearchOpened, config.SearchOpenedAppearance);
+-	}
++		case TaskbarStateType::SearchOpened:
++		{
++			// Need to recalculate startOpened for search check
++			bool startOpened;
++			if (m_IsWindows11 && (m_CurrentSearchMonitor != nullptr || m_CurrentFindInStartMonitor != nullptr))
++			{
++				startOpened = m_CurrentStartMonitor != nullptr && (m_CurrentSearchMonitor == taskbar->first || m_CurrentFindInStartMonitor == taskbar->first);
++			}
++			else
++			{
++				startOpened = m_CurrentStartMonitor == taskbar->first;
++			}
+ 
+-	auto &maximisedWindows = taskbar->second.MaximisedWindows;
+-	if (config.MaximisedWindowAppearance.Enabled && !maximisedWindows.empty())
+-	{
+-		if (config.MaximisedWindowAppearance.HasRules())
++			if (config.SearchOpenedAppearance.Enabled && !startOpened && (m_CurrentSearchMonitor == taskbar->first || m_CurrentFindInStartMonitor == taskbar->first))
++			{
++				return WithPreview(txmp::TaskbarState::SearchOpened, config.SearchOpenedAppearance);
++			}
++			break;
++		}
++
++		case TaskbarStateType::MaximisedWindow:
+ 		{
+-			for (const Window wnd : Window::DesktopWindow().get_ordered_childrens())
++			auto &maximisedWindows = taskbar->second.MaximisedWindows;
++			if (config.MaximisedWindowAppearance.Enabled && !maximisedWindows.empty())
+ 			{
+-				// find the highest maximized window in the z-order.
+-				if (maximisedWindows.contains(wnd))
++				if (config.MaximisedWindowAppearance.HasRules())
+ 				{
+-					if (const auto rule = config.MaximisedWindowAppearance.FindRule(wnd))
++					for (const Window wnd : Window::DesktopWindow().get_ordered_childrens())
+ 					{
+-						// if it has a rule, use that rule
+-						return *rule;
++						// find the highest maximized window in the z-order.
++						if (maximisedWindows.contains(wnd))
++						{
++							if (const auto rule = config.MaximisedWindowAppearance.FindRule(wnd))
++							{
++								// if it has a rule, use that rule
++								return *rule;
++							}
++							else
++							{
++								// we only consider the highest z-order maximized window for rules
++								// so stop looking through the z-order
++								break;
++							}
++						}
+ 					}
+-					else
++				}
++
++				// otherwise, use the normal maximized state
++				return WithPreview(txmp::TaskbarState::MaximisedWindow, config.MaximisedWindowAppearance);
++			}
++			break;
++		}
++
++		case TaskbarStateType::VisibleWindow:
++		{
++			auto &maximisedWindows = taskbar->second.MaximisedWindows;
++			if (config.VisibleWindowAppearance.Enabled && (!maximisedWindows.empty() || !taskbar->second.NormalWindows.empty()))
++			{
++				// if there is no maximized window, and the foreground window is on the current monitor
++				if (config.VisibleWindowAppearance.HasRules() && maximisedWindows.empty() && m_ForegroundWindow.monitor() == taskbar->first)
++				{
++					// find a rule for the foreground window
++					if (const auto rule = config.VisibleWindowAppearance.FindRule(m_ForegroundWindow))
+ 					{
+-						// we only consider the highest z-order maximized window for rules
+-						// so stop looking through the z-order
+-						break;
++						// if it has a rule, use that rule
++						return *rule;
+ 					}
+ 				}
++
++				// otherwise use normal visible state
++				return WithPreview(txmp::TaskbarState::VisibleWindow, config.VisibleWindowAppearance);
+ 			}
++			break;
+ 		}
+ 
+-		// otherwise, use the normal maximized state
+-		return WithPreview(txmp::TaskbarState::MaximisedWindow, config.MaximisedWindowAppearance);
+-	}
++		case TaskbarStateType::Desktop:
++		{
++			// Desktop is always the fallback
++			return WithPreview(txmp::TaskbarState::Desktop, config.DesktopAppearance);
++		}
++
++		default:
++			break;
++		}
++
++		return std::nullopt;
++	};
+ 
+-	if (config.VisibleWindowAppearance.Enabled && (!maximisedWindows.empty() || !taskbar->second.NormalWindows.empty()))
++	// Iterate through states in priority order
++	for (const auto &stateType : config.StatePriority)
+ 	{
+-		// if there is no maximized window, and the foreground window is on the current monitor
+-		if (config.VisibleWindowAppearance.HasRules() && maximisedWindows.empty() && m_ForegroundWindow.monitor() == taskbar->first)
++		auto result = checkState(stateType);
++		if (result)
+ 		{
+-			// find a rule for the foreground window
+-			if (const auto rule = config.VisibleWindowAppearance.FindRule(m_ForegroundWindow))
+-			{
+-				// if it has a rule, use that rule
+-				return *rule;
+-			}
++			return *result;
+ 		}
+-
+-		// otherwise use normal visible state
+-		return WithPreview(txmp::TaskbarState::VisibleWindow, config.VisibleWindowAppearance);
+ 	}
+ 
++	// Fallback to desktop (should never reach here if Desktop is in the priority list)
+ 	return WithPreview(txmp::TaskbarState::Desktop, config.DesktopAppearance);
+ }
+ 
+diff --git a/settings.schema.json b/settings.schema.json
+index 5c5c4c6..786c1f5 100644
+--- a/settings.schema.json
++++ b/settings.schema.json
+@@ -164,6 +164,26 @@
+     },
+     "copy_dlls": {
+       "type": "boolean"
++    },
++    "state_priority": {
++      "type": "array",
++      "items": {
++        "enum": [
++          "battery_saver",
++          "task_view_opened",
++          "peek_active",
++          "start_opened",
++          "search_opened",
++          "maximised_window",
++          "visible_window",
++          "desktop"
++        ],
++        "type": "string"
++      },
++      "uniqueItems": true,
++      "minItems": 8,
++      "maxItems": 8,
++      "description": "Priority order for taskbar state evaluation. States earlier in the list have higher priority. All 8 states must be specified."
+     }
+   },
+   "type": "object"
